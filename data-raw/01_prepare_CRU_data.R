@@ -128,17 +128,20 @@ siteinfo <- DBEN_sites |>
 
 #FOR DEVELOPMENT
 set.seed(123)
-siteinfo <- siteinfo |> dplyr::slice_sample(n=5)
+siteinfo <- siteinfo |> dplyr::slice_sample(n=2)
 
+n_sites <- nrow(siteinfo)
 
 ## Get CRU forcing datasets for BiomeE with ingestr ----
-
+Sys.getenv("")
 ### Meteorological forcing from CRU data (https://crudata.uea.ac.uk/cru/data/hrg/)
 df_meteo_cru <- ingestr::ingest(
   siteinfo = siteinfo,
   source = "cru",
   getvars = c("temp", "prec", "ppfd", "vpd", "ccov", "patm"),     #TODO: add tmin, tmax (if needed) ### "dtr" dtr=diurnal temperature range
-  dir = "/data/archive/cru_harris_2024/data/",
+  dir = ifelse(grepl(pattern = "cnode[0-9]*", as.character(Sys.info()["nodename"])),
+               "/storage/capacity/occr_geco/data/archive/cru_harris_2024/data/", # base path on UBELIX
+               "/data/archive/cru_harris_2024/data/"), # base path on workstation
   timescale = "d",
   settings = list(correct_bias = NULL)
   # settings = list(correct_bias = "worldclim", dir_bias = "/data/archive/worldclim_fick_2017/data/")  # TODO: why are we limiting the CRU data extraction. a) Couldn't we just apply the 12 month-based bias corrections to the full period. b) Why is it saying it stops at 2000, but 2012-2016 is feasible in the CRU vignette?
@@ -160,13 +163,14 @@ df_meteo_cru <- df_meteo_cru |>
   tidyr::fill(co2, .direction = "up")
 
 # write all climate data from CRS to file
+basepath <- paste0("DBEN_CRU_",n_sites,"sites_meteo_data")
 saveRDS(
   df_meteo_cru,
-  "/data_2/scratch/fbernhard/DBEN_CRU_meteo_data.rds",
+  paste0("/data_2/scratch/fbernhard/",basepath,".rds"),
   compress = "xz"
 ) # and then manually copy this to DBEN_global/data/DBEN_CRU_meteo_data.rds
-# df_meteo_cru <- readRDS("/data_2/scratch/fbernhard/DBEN_CRU_meteo_data.rds")
-# df_meteo_cru <- readRDS("../DBEN_global/data/DBEN_CRU_meteo_data.rds")
+# df_meteo_cru <- readRDS(paste0("/data_2/scratch/fbernhard/",basepath,".rds"))
+# df_meteo_cru <- readRDS(paste0("../DBEN_global/data/",basepath,".rds"))
 
 # Illustrate the meteo data ----
 library(ggplot2)
@@ -190,10 +194,10 @@ plot2 <- df_meteo_cru |> pivot_longer(!c("date","sitename")) |>
 
 ggsave(
   plot1,width = 3200, height = 2400, units = "px",
-  filename = "/data_2/scratch/fbernhard/DBEN_CRU_meteo_data1_PROFOUNDsites.png")
+  filename = paste0("/data_2/scratch/fbernhard/",basepath,"1_PROFOUNDsites.png"))
 ggsave(
   plot2,width = 3200, height = 2400, units = "px",
-  filename = "/data_2/scratch/fbernhard/DBEN_CRU_meteo_data2_PROFOUNDsites.png")
+  filename = paste0("/data_2/scratch/fbernhard/",basepath,"2_PROFOUNDsites.png"))
 
 
 #
