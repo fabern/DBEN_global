@@ -6,6 +6,8 @@
 # second: then run this script
 # last: manually delete again the temporary nc files (only keep the gzipped files)
 
+# options("renv.config.pak.enabled"=TRUE)
+# options("renv.config.pak.enabled")
 # renv::install("geco-bern/ingestr@adc1bad74a43757155210b127914937b2a9a417d")
 library(ingestr)
 library(dplyr)
@@ -23,6 +25,10 @@ DBEN_sites <- df_benchmark |> distinct(Lat,Lon) |> mutate(
   rename(lat = Lat,
          lon = Lon) |>
   mutate(aspect_deg=0, elevation_masl=0, slope_percent=0)
+
+# TODO: get elevation
+# TODO: get better CO2
+# TODO: ...
 
 
 # #----------------------------
@@ -115,10 +121,14 @@ DBEN_sites <- df_benchmark |> distinct(Lat,Lon) |> mutate(
 # 1 CH-Lae   <tibble [1 × 10]> <tibble [1 × 11]> <tibble [1 × 19]> <tibble [16 × 55]> <tibble [10 × 9]>             0.01            0.001         0.015  0.0008 <tibble [365 × 9]>
 
 ### Create siteinfo (and complement with Water Holding Capacity (unneeded for BiomeE)) ----
-siteinfo <- PROFOUND_sites |>
-  select(sitename, site, lon, lat, elv = elevation_masl) |>
+siteinfo <- DBEN_sites |>
+  select(sitename=siteID, lon, lat, elv = elevation_masl) |>
   mutate(year_start = 1901,
          year_end   = 2015)
+
+#FOR DEVELOPMENT
+set.seed(123)
+siteinfo <- siteinfo |> dplyr::slice_sample(n=5)
 
 
 ## Get CRU forcing datasets for BiomeE with ingestr ----
@@ -127,13 +137,13 @@ siteinfo <- PROFOUND_sites |>
 df_meteo_cru <- ingestr::ingest(
   siteinfo = siteinfo,
   source = "cru",
-  getvars = c("temp", "prec", "ppfd", "vpd", "ccov", "patm"),
-  #TODO: add tmin, tmax (if needed) ### "dtr" dtr=diurnal temperature range
+  getvars = c("temp", "prec", "ppfd", "vpd", "ccov", "patm"),     #TODO: add tmin, tmax (if needed) ### "dtr" dtr=diurnal temperature range
   dir = "/data/archive/cru_harris_2024/data/",
   timescale = "d",
   settings = list(correct_bias = NULL)
   # settings = list(correct_bias = "worldclim", dir_bias = "/data/archive/worldclim_fick_2017/data/")  # TODO: why are we limiting the CRU data extraction. a) Couldn't we just apply the 12 month-based bias corrections to the full period. b) Why is it saying it stops at 2000, but 2012-2016 is feasible in the CRU vignette?
 ) |> tidyr::unnest(data)
+
 
 ### Get CO2 data from Mauna Loa ----
 df_co2 <- read.csv(
@@ -152,11 +162,11 @@ df_meteo_cru <- df_meteo_cru |>
 # write all climate data from CRS to file
 saveRDS(
   df_meteo_cru,
-  "/data_2/scratch/fbernhard/MIND_CRU_meteo_data.rds",
+  "/data_2/scratch/fbernhard/DBEN_CRU_meteo_data.rds",
   compress = "xz"
-) # and then manually copy this to MIND_biomee_calibration/data/MIND_CRU_meteo_data.rds
-# df_meteo_cru <- readRDS("/data_2/scratch/fbernhard/MIND_CRU_meteo_data.rds")
-# df_meteo_cru <- readRDS("../MIND_biomee_calibration/data/MIND_CRU_meteo_data.rds")
+) # and then manually copy this to DBEN_global/data/DBEN_CRU_meteo_data.rds
+# df_meteo_cru <- readRDS("/data_2/scratch/fbernhard/DBEN_CRU_meteo_data.rds")
+# df_meteo_cru <- readRDS("../DBEN_global/data/DBEN_CRU_meteo_data.rds")
 
 # Illustrate the meteo data ----
 library(ggplot2)
@@ -180,10 +190,10 @@ plot2 <- df_meteo_cru |> pivot_longer(!c("date","sitename")) |>
 
 ggsave(
   plot1,width = 3200, height = 2400, units = "px",
-  filename = "/data_2/scratch/fbernhard/MIND_CRU_meteo_data1_PROFOUNDsites.png")
+  filename = "/data_2/scratch/fbernhard/DBEN_CRU_meteo_data1_PROFOUNDsites.png")
 ggsave(
   plot2,width = 3200, height = 2400, units = "px",
-  filename = "/data_2/scratch/fbernhard/MIND_CRU_meteo_data2_PROFOUNDsites.png")
+  filename = "/data_2/scratch/fbernhard/DBEN_CRU_meteo_data2_PROFOUNDsites.png")
 
 
 #
@@ -304,22 +314,22 @@ ggsave(
 #
 # ggsave(
 #   plot1,width = 3200, height = 2400, units = "px",
-#   filename = "/data_2/scratch/fbernhard/MIND_CRU_biomee_forcing_data1_PROFOUNDsites.png")
+#   filename = "/data_2/scratch/fbernhard/DBEN_CRU_biomee_forcing_data1_PROFOUNDsites.png")
 # ggsave(
 #   plot2,width = 3200, height = 2400, units = "px",
-#   filename = "/data_2/scratch/fbernhard/MIND_CRU_biomee_forcing_data2_PROFOUNDsites.png")
+#   filename = "/data_2/scratch/fbernhard/DBEN_CRU_biomee_forcing_data2_PROFOUNDsites.png")
 #
 #
 #
 # # write all climate data from biomee driver to file
 # saveRDS(
 #   df_CRU_PROFOUND2,
-#   "/data_2/scratch/fbernhard/MIND_CRU_biomee_forcing_data_PROFOUNDsites.rds",
+#   "/data_2/scratch/fbernhard/DBEN_CRU_biomee_forcing_data_PROFOUNDsites.rds",
 #   compress = "xz"
 # ) # and then manually copy this to MIND_biomee_calibration/data/MIND_rsofun_driver_data_v3.4.rds
 # saveRDS(
 #   drivers_biomee,
-#   "/data_2/scratch/fbernhard/MIND_CRU_meteo_data.rds",
+#   "/data_2/scratch/fbernhard/DBEN_CRU_meteo_data.rds",
 #   compress = "xz")
 #
 #
@@ -347,10 +357,10 @@ ggsave(
 #     geom_line() + facet_grid(name~., scales = "free_y") + theme_bw()
 #   ggsave(
 #     plot1_biomee,width = 3200, height = 2400, units = "px",
-#     filename = paste0("/data_2/scratch/fbernhard/MIND_CRU_biomee_drivers_result1_PROFOUNDsites_",site_iter,"_",site_iter_name,".png"))
+#     filename = paste0("/data_2/scratch/fbernhard/DBEN_CRU_biomee_drivers_result1_PROFOUNDsites_",site_iter,"_",site_iter_name,".png"))
 #   ggsave(
 #     plot2_biomee,width = 3200, height = 2400, units = "px",
-#     filename = paste0("/data_2/scratch/fbernhard/MIND_CRU_biomee_drivers_result2_PROFOUNDsites_",site_iter,"_",site_iter_name,".png"))
+#     filename = paste0("/data_2/scratch/fbernhard/DBEN_CRU_biomee_drivers_result2_PROFOUNDsites_",site_iter,"_",site_iter_name,".png"))
 # }
 #
 #
