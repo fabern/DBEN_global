@@ -126,78 +126,122 @@ siteinfo <- DBEN_sites |>
   mutate(year_start = 1901,
          year_end   = 2015)
 
+computer_name <- as.character(Sys.info()["nodename"])
+scratch_data_basepath <- dplyr::case_when(
+  grepl(pattern="cnode[0-9]*",         computer_name)~"/storage/capacity/occr_geco/data_2/scratch/fbernhard/", # base path on UBELIX
+  grepl(pattern=".*-MacBook-Air.local",computer_name)~"~/data/scratch/fbernhard/",
+  grepl(pattern="dash",                computer_name)~"/data_2/scratch/fbernhard/",
+  TRUE~"unmatched" # .unmatched = "error"
+)
+if(scratch_data_basepath == "unmatched"){stop(paste0("Unknown computer name: '", computer_name, "'"))}
+dir.create(file.path(scratch_data_basepath, "DBEN_CRU"), recursive = F)
+
+cru_basepath <- dplyr::case_when(
+  grepl(pattern="cnode[0-9]*",         computer_name)~"/storage/capacity/occr_geco/data/archive/cru_harris_2024/data/", # base path on UBELIX
+  grepl(pattern=".*-MacBook-Air.local",computer_name)~"unmatched",
+  grepl(pattern="dash",                computer_name)~"/data/archive/cru_harris_2024/data/", # base path on workstation
+  TRUE~"unmatched" # .unmatched = "error"
+)
+if(cru_basepath == "unmatched"){stop(paste0("Unknown computer name: '", computer_name, "'"))}
+
+
+
+
 #FOR DEVELOPMENT
 set.seed(123)
 siteinfo <- siteinfo |> dplyr::slice_sample(n=2)
 
-n_sites <- nrow(siteinfo)
-
-## Get CRU forcing datasets for BiomeE with ingestr ----
-Sys.getenv("")
-### Meteorological forcing from CRU data (https://crudata.uea.ac.uk/cru/data/hrg/)
-df_meteo_cru <- ingestr::ingest(
-  siteinfo = siteinfo,
-  source = "cru",
-  getvars = c("temp", "prec", "ppfd", "vpd", "ccov", "patm"),     #TODO: add tmin, tmax (if needed) ### "dtr" dtr=diurnal temperature range
-  dir = ifelse(grepl(pattern = "cnode[0-9]*", as.character(Sys.info()["nodename"])),
-               "/storage/capacity/occr_geco/data/archive/cru_harris_2024/data/", # base path on UBELIX
-               "/data/archive/cru_harris_2024/data/"), # base path on workstation
-  timescale = "d",
-  settings = list(correct_bias = NULL)
-  # settings = list(correct_bias = "worldclim", dir_bias = "/data/archive/worldclim_fick_2017/data/")  # TODO: why are we limiting the CRU data extraction. a) Couldn't we just apply the 12 month-based bias corrections to the full period. b) Why is it saying it stops at 2000, but 2012-2016 is feasible in the CRU vignette?
-) |> tidyr::unnest(data)
-
-
-### Get CO2 data from Mauna Loa ----
+### Get CO2 data from Mauna Loa once and reuse in each worker ----
 df_co2 <- read.csv(
   url("https://gml.noaa.gov/webdata/ccgg/trends/co2/co2_annmean_mlo.csv"), # or use ingestr, source="co2_mlo"
   skip = 43) |>
   dplyr::select(year, mean) |>
   dplyr::rename(co2 = mean)
 
-df_meteo_cru <- df_meteo_cru |>
-  dplyr::mutate(year = lubridate::year(date)) |>
-  # merge CO2 by year
-  dplyr::left_join(df_co2, by = "year") |>
-  # for years before Mauna Loa measurements started (1959), use the earliest value (1959 = 315.98 ppm)
-  tidyr::fill(co2, .direction = "up")
+### Meteorological forcing from CRU data (https://crudata.uea.ac.uk/cru/data/hrg/)
+process_site_cru <- function(site_row, cru_basepath, scratch_data_basepath, df_co2) {
+  basenam_e <- paste0("DBEN_CRU_meteo_data_", site_row$sitename)
+  basepath <- file.path(scratch_data_basepath, "DBEN_CRU", basenam_e)
+  print(basepath)
 
-# write all climate data from CRS to file
-basepath <- paste0("DBEN_CRU_",n_sites,"sites_meteo_data")
-saveRDS(
-  df_meteo_cru,
-  paste0("/data_2/scratch/fbernhard/",basepath,".rds"),
-  compress = "xz"
-) # and then manually copy this to DBEN_global/data/DBEN_CRU_meteo_data.rds
+  df_meteo_cru <- ingestr::ingest(
+    siteinfo = site_row,
+    source = "cru",
+    getvars = c("temp", "prec", "ppfd", "vpd", "ccov", "patm"),     #TODO: add tmin, tmax (if needed) ### "dtr" dtr=diurnal temperature range
+    dir = cru_basepath,
+    timescale = "d",
+    settings = list(correct_bias = NULL)
+    # settings = list(correct_bias = "worldclim", dir_bias = "/data/archive/worldclim_fick_2017/data/")  # TODO: why are we limiting the CRU data extraction. a) Couldn't we just apply the 12 month-based bias corrections to the full period. b) Why is it saying it stops at 2000, but 2012-2016 is feasible in the CRU vignette?
+  ) |>
+    tidyr::unnest(data) |>
+    dplyr::mutate(year = lubridate::year(date)) |>
+    dplyr::left_join(df_co2, by = "year") |>
+    tidyr::fill(co2, .direction = "up") # for years before Mauna Loa measurements started (1959), use the earliest value (1959 = 315.98 ppm) # TODO: check with protocol
+
+  # write all climate data from CRU to file
+  saveRDS(df_meteo_cru, paste0(basepath, ".rds"), compress = "xz")
+
+  # Illustrate the meteo data ----
+  plot1 <- df_meteo_cru |>
+    tidyr::pivot_longer(!c("date", "sitename")) |>
+    ggplot(aes(x = date, y = value, color = sitename)) +
+    geom_line() +
+    facet_grid(name ~ ., scales = "free_y") +
+    theme_bw() +
+    scale_x_date(date_breaks = "5 years", date_minor_breaks = "1 year", date_labels = "%b\n%Y")
+
+  max_year <- lubridate::year(max(df_meteo_cru$date))
+  plot2 <- df_meteo_cru |>
+    tidyr::pivot_longer(!c("date", "sitename")) |>
+    dplyr::mutate(
+      doy = lubridate::yday(date),
+      month = lubridate::month(date),
+      year = lubridate::year(date)
+    ) |>
+    dplyr::mutate(decade = cut(year, breaks = c(seq(1900, max_year, by = 20), max_year), dig.lab = 4)) |>
+    ggplot(aes(x = doy, y = value, color = sitename, group = interaction(sitename, year))) +
+    geom_line(alpha = 0.3) +
+    facet_grid(name ~ decade, scales = "free_y", switch = "y") +
+    scale_x_continuous(
+      "",
+      breaks = seq(1, 360, by = 28),
+      minor_breaks = seq(1, 365, by = 7)
+    ) +
+    scale_y_continuous("") +
+    theme_bw() +
+    theme(strip.placement = "outside")
+
+  ggsave(plot1, width = 3200, height = 2400, units = "px", filename = paste0(basepath, "_timeseries.png"))
+  ggsave(plot2, width = 3200, height = 2400, units = "px", filename = paste0(basepath, "_seasonality.png"))
+
+  # return value: collected by central worker
+  tibble::tibble(
+    sitename     = site_row$sitename,
+    output_rds   = paste0(basepath, ".rds"),
+    output_plot1 = paste0(basepath, "_timeseries.png"),
+    output_plot2 = paste0(basepath, "_seasonality.png")
+  )
+}
+
+siteinfo_split <- split(siteinfo, seq_len(nrow(siteinfo)))
+
+# On macOS/Linux, mclapply is a simple way to spread this across cores.
+site_outputs <- parallel::mclapply(
+  siteinfo_split,
+  process_site_cru,
+  cru_basepath = cru_basepath,
+  scratch_data_basepath = scratch_data_basepath,
+  df_co2 = df_co2,
+  mc.cores = 16
+)
+
+site_outputs <- dplyr::bind_rows(site_outputs)
+print(site_outputs)
+
+# and then manually copy the generated files to DBEN_global/data/DBEN_CRU_meteo_data.rds
 # df_meteo_cru <- readRDS(paste0("/data_2/scratch/fbernhard/",basepath,".rds"))
 # df_meteo_cru <- readRDS(paste0("../DBEN_global/data/",basepath,".rds"))
 
-# Illustrate the meteo data ----
-library(ggplot2)
-plot1 <- df_meteo_cru |> pivot_longer(!c("date","sitename")) |>
-  ggplot(aes(x=date, y = value, color = sitename)) + geom_line() + facet_grid(name~., scales = "free_y") +
-  theme_bw() +
-  scale_x_date(date_breaks = "5 years", date_minor_breaks = "1 year", date_labels = "%b\n%Y")
-max_year <- lubridate::year(max(df_meteo_cru$date))
-plot2 <- df_meteo_cru |> pivot_longer(!c("date","sitename")) |>
-  mutate(doy   = lubridate::yday(date),
-         month = lubridate::month(date),
-         year  = lubridate::year(date) ) |>
-  mutate(decade = cut(year, breaks = c(seq(1900,max_year, by = 20), max_year), dig.lab = 4)) |>
-  ggplot(aes(x=doy, y = value, color = sitename, group = interaction(sitename, year))) +
-  geom_line(alpha = 0.3) +
-  facet_grid(name~decade, scales = "free_y", switch = "y") +
-  scale_x_continuous("", breaks = seq(1, 360, by = 28), #labels = ~lubridate::month(.x, label = TRUE),
-                     minor_breaks = seq(1, 365, by = 7)) +
-  scale_y_continuous("") +
-  theme_bw() + theme(strip.placement = "outside")
-
-ggsave(
-  plot1,width = 3200, height = 2400, units = "px",
-  filename = paste0("/data_2/scratch/fbernhard/",basepath,"1_PROFOUNDsites.png"))
-ggsave(
-  plot2,width = 3200, height = 2400, units = "px",
-  filename = paste0("/data_2/scratch/fbernhard/",basepath,"2_PROFOUNDsites.png"))
 
 
 #
