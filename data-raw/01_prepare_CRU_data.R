@@ -149,7 +149,7 @@ if(cru_basepath == "unmatched"){stop(paste0("Unknown computer name: '", computer
 
 #FOR DEVELOPMENT
 set.seed(123)
-siteinfo <- siteinfo |> dplyr::slice_sample(n=2)
+# siteinfo <- siteinfo |> dplyr::slice_sample(n=5)
 
 ### Get CO2 data from Mauna Loa once and reuse in each worker ----
 df_co2 <- read.csv(
@@ -162,8 +162,19 @@ df_co2 <- read.csv(
 process_site_cru <- function(site_row, cru_basepath, scratch_data_basepath, df_co2) {
   basenam_e <- paste0("DBEN_CRU_meteo_data_", site_row$sitename)
   basepath <- file.path(scratch_data_basepath, "DBEN_CRU", basenam_e)
-  print(basepath)
+  print(sprintf("[%s] Starting: %s",Sys.time(), basepath))
 
+  if (file.exists(paste0(basepath, ".rds"))){
+    print(sprintf("[%s] File alreay exists: %s",Sys.time(), paste0(basepath, ".rds")))
+    return(
+      tibble::tibble(
+        sitename     = site_row$sitename,
+        output_rds   = paste0(basepath, ".rds"),
+        output_plot1 = paste0(basepath, "_timeseries.png"),
+        output_plot2 = paste0(basepath, "_seasonality.png")
+      )
+    )
+  }
   df_meteo_cru <- ingestr::ingest(
     siteinfo = site_row,
     source = "cru",
